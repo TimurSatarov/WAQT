@@ -199,7 +199,8 @@ class OverlayWidget(QWidget):
         s = self._style
 
         if s == "pill":
-            self.setFixedSize(210, 36)
+            self.setFixedHeight(36)
+            self.setMinimumWidth(210)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(12, 0, 10, 0)
             layout.setSpacing(6)
@@ -234,7 +235,8 @@ class OverlayWidget(QWidget):
             self._add_close(layout)
 
         elif s == "card":
-            self.setFixedSize(200, 60)
+            self.setFixedHeight(60)
+            self.setMinimumWidth(200)
             root = QVBoxLayout(self)
             root.setContentsMargins(14, 8, 10, 8)
             root.setSpacing(3)
@@ -276,7 +278,8 @@ class OverlayWidget(QWidget):
             root.addLayout(row2)
 
         elif s == "minimal":
-            self.setFixedSize(180, 40)
+            self.setFixedHeight(40)
+            self.setMinimumWidth(180)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(8, 0, 8, 0)
             layout.setSpacing(5)

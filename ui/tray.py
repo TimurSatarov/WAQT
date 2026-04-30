@@ -259,16 +259,20 @@ class TrayIcon(QSystemTrayIcon):
 
     def _on_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            pass  # main_window connects show_action to open window
-        elif reason == QSystemTrayIcon.ActivationReason.MiddleClick:
+            # Single left click → toggle popup
             self._toggle_popup()
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            # Double click → open main window (handled via show_action)
+            pass
 
     def _toggle_popup(self):
         if self._popup.isVisible():
             self._popup.hide()
         else:
             if self._times:
-                self._popup.update_times(self._times, self._next, self._lang_names, self._countdown)
+                self._popup.update_times(
+                    self._times, self._next, self._lang_names, self._countdown
+                )
             self._popup.show_near_tray()
 
     @property
@@ -322,3 +326,4 @@ class TrayIcon(QSystemTrayIcon):
     def overlay_action(self):   return self._overlay_action
     @property
     def quit_action(self):      return self._quit_action
+    

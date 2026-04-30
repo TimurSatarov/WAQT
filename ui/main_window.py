@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import *
-from PyQt6.QtCore import QTimer, Qt, QTime, QThread, pyqtSignal, QSize
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QTimer, Qt, QTime, QThread, pyqtSignal, QSize, QRectF
+from PyQt6.QtGui import QFont, QPainter, QColor, QBrush, QPen, QLinearGradient
 import sys, os
 
 # Add project root to path
@@ -37,6 +37,7 @@ TRANSLATIONS = {
         "language": "Language", "display": "Display mode",
         "overlay": "Overlay", "taskbar": "Taskbar",
         "loading": "Loading...", "error": "Error", "themes": "Themes",
+        "next_prayer": "Next prayer", "current_prayer": "Current prayer",
     },
     "ru": {
         "Fajr": "Фаджр", "Sunrise": "Восход", "Dhuhr": "Зухр",
@@ -47,6 +48,7 @@ TRANSLATIONS = {
         "language": "Язык", "display": "Режим отображения",
         "overlay": "Поверх окон", "taskbar": "Панель задач",
         "loading": "Загрузка...", "error": "Ошибка", "themes": "Темы",
+        "next_prayer": "Следующий намаз", "current_prayer": "Текущий намаз",
     },
     "kg": {
         "Fajr": "Бамдат", "Sunrise": "Күн чыгуу", "Dhuhr": "Бешим",
@@ -57,6 +59,7 @@ TRANSLATIONS = {
         "language": "Тил", "display": "Көрсөтүү режими",
         "overlay": "Терезелердин үстүндө", "taskbar": "Тапшырмалар панели",
         "loading": "Жүктөлүүдө...", "error": "Ката", "themes": "Темалар",
+        "next_prayer": "Кийинки намаз", "current_prayer": "Учурдагы намаз",
     },
 }
 
@@ -151,18 +154,125 @@ class FetchWorker(QThread):
             self.failed.emit(str(e))
 
 
-# ── Prayer card ───────────────────────────────────────────────────────────────
+# ── Progress bar widget ───────────────────────────────────────────────────────
+
+class PrayerProgressBar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(4)
+        self._progress = 0.0
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    def set_progress(self, value: float):
+        self._progress = max(0.0, min(1.0, value))
+        self.update()
+
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QLinearGradient
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Background track
+        p.setBrush(QBrush(QColor(255, 255, 255, 25)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(0, 0, w, h, 2, 2)
+
+        # Progress fill with gradient
+        if self._progress > 0:
+            grad = QLinearGradient(0, 0, w, 0)
+            grad.setColorAt(0, QColor(ACCENT))
+            grad.setColorAt(1, QColor("#5DCAA5"))
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(0, 0, int(w * self._progress), h, 2, 2)
+
+
+# ── Next prayer hero card ─────────────────────────────────────────────────────
+
+class NextPrayerCard(QFrame):
+    """Large card showing current/next prayer with progress bar."""
+
+    def __init__(self, name: str, time_str: str, label: str, lang: str = "en"):
+        super().__init__()
+        self.setObjectName("heroCard")
+        self.setFixedHeight(110)
+        self.setStyleSheet(f"""
+            QFrame#heroCard {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #0d2b1f, stop:1 #0a1e28
+                );
+                border: 1px solid {ACCENT};
+                border-radius: 16px;
+            }}
+            QFrame#heroCard QLabel {{ background: transparent; border: none; }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 14, 20, 12)
+        root.setSpacing(4)
+
+        # Top row: label + time
+        top = QHBoxLayout()
+
+        left = QVBoxLayout()
+        left.setSpacing(2)
+
+        self._name_lbl = QLabel(name)
+        self._name_lbl.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        self._name_lbl.setStyleSheet("color: #ffffff;")
+
+        self._label_lbl = QLabel(label)
+        self._label_lbl.setStyleSheet(f"color: {ACCENT}; font-size: 11px;")
+
+        left.addWidget(self._name_lbl)
+        left.addWidget(self._label_lbl)
+
+        right = QVBoxLayout()
+        right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+
+        self._time_lbl = QLabel(time_str)
+        self._time_lbl.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        self._time_lbl.setStyleSheet(f"color: {ACCENT};")
+        self._time_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.countdown_lbl = QLabel("--:--:--")
+        self.countdown_lbl.setStyleSheet("color: rgba(255,255,255,0.6); font-size: 11px;")
+        self.countdown_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        right.addWidget(self._time_lbl)
+        right.addWidget(self.countdown_lbl)
+
+        top.addLayout(left)
+        top.addStretch()
+        top.addLayout(right)
+        root.addLayout(top)
+
+        root.addStretch()
+
+        # Progress bar
+        self._bar = PrayerProgressBar()
+        root.addWidget(self._bar)
+
+    def set_progress(self, value: float):
+        self._bar.set_progress(value)
+
+
+# ── Regular prayer card ───────────────────────────────────────────────────────
 
 class PrayerCard(QFrame):
     def __init__(self, name, time_str, is_next=False, lang="en"):
         super().__init__()
         self.setObjectName("prayerCard")
-        self.setFixedHeight(68)
+        self.setFixedHeight(58)
 
-        style = f"background: #0d2b1f; border: 1.5px solid {ACCENT};" if is_next \
-           else f"background: {DARK_SURFACE}; border: 1px solid {BORDER};"
+        if is_next:
+            style = f"background: #0d2b1f; border-left: 3px solid {ACCENT}; border-top: none; border-right: none; border-bottom: none; border-radius: 0px;"
+        else:
+            style = f"background: transparent; border: none; border-bottom: 1px solid {BORDER};"
+
         self.setStyleSheet(f"""
-            QFrame#prayerCard {{ {style} border-radius: 12px; }}
+            QFrame#prayerCard {{ {style} }}
             QFrame#prayerCard QLabel {{ background: transparent; border: none; }}
         """)
 
@@ -175,29 +285,28 @@ class PrayerCard(QFrame):
         left.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         arabic_lbl = QLabel(ARABIC.get(name, name))
-        arabic_lbl.setFont(QFont("Arabic Typesetting, Scheherazade New, Tahoma, Arial", 17))
-        arabic_lbl.setStyleSheet(f"color: {'#5DCAA5' if is_next else '#aaaacc'};")
+        arabic_lbl.setFont(QFont("Arabic Typesetting, Scheherazade New, Tahoma, Arial", 15))
+        arabic_lbl.setStyleSheet(f"color: {'#5DCAA5' if is_next else '#ccccdd'};")
 
         latin = TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(name, name)
         latin_lbl = QLabel(latin)
-        latin_lbl.setStyleSheet(f"color: {ACCENT if is_next else TEXT_MUTED}; font-size: 11px;")
+        latin_lbl.setStyleSheet(f"color: {ACCENT if is_next else TEXT_MUTED}; font-size: 10px;")
 
         left.addWidget(arabic_lbl)
         left.addWidget(latin_lbl)
 
         right = QVBoxLayout()
-        right.setSpacing(2)
         right.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         time_lbl = QLabel(time_str)
-        time_lbl.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold if is_next else QFont.Weight.Normal))
-        time_lbl.setStyleSheet(f"color: {'#ffffff' if is_next else TEXT_PRIMARY};")
+        time_lbl.setFont(QFont("Segoe UI", 16, QFont.Weight.Medium if is_next else QFont.Weight.Normal))
+        time_lbl.setStyleSheet(f"color: {'#ffffff' if is_next else TEXT_MUTED};")
         time_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         right.addWidget(time_lbl)
 
         if is_next:
             self.countdown_lbl = QLabel("--:--:--")
-            self.countdown_lbl.setStyleSheet(f"color: {ACCENT}; font-size: 11px;")
+            self.countdown_lbl.setStyleSheet(f"color: {ACCENT}; font-size: 10px;")
             self.countdown_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
             right.addWidget(self.countdown_lbl)
 
@@ -241,20 +350,24 @@ class MainWindow(QWidget):
         # System tray
         self._tray = TrayIcon(self)
         self._tray.show_action.triggered.connect(self._open_window)
+        self._tray.times_action.triggered.connect(self._tray._toggle_popup)
         self._tray.overlay_action.triggered.connect(self._toggle_overlay)
         self._tray.quit_action.triggered.connect(QApplication.quit)
-        self._tray.activated.connect(
-            lambda r: self._open_window()
-            if r == self._tray.ActivationReason.Trigger else None
-        )
+        self._tray.activated.connect(self._tray._on_activated)
 
         # First run tip
         if not self.settings.get("first_run_shown", False):
             QTimer.singleShot(1500, self._show_first_run_tip)
 
+        # Main tick timer
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(1000)
+
+        # Refresh times every 30 min to handle sleep/wake
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._auto_refresh)
+        self._refresh_timer.start(30 * 60 * 1000)
 
         # Fetch prayer times after UI is shown
         QTimer.singleShot(100, self.refresh_times)
@@ -485,31 +598,52 @@ class MainWindow(QWidget):
         w = QWidget()
         w.setStyleSheet(f"background: {DARK_BG};")
         v = QVBoxLayout(w)
-        v.setContentsMargins(20, 20, 20, 20)
-        v.setSpacing(8)
+        v.setContentsMargins(20, 20, 20, 16)
+        v.setSpacing(6)
 
-        self._loc_lbl = QLabel()
-        self._loc_lbl.setStyleSheet("color: #ffffff; font-size: 15px; font-weight: 600;")
-        v.addWidget(self._loc_lbl)
+        # City large + country small on same line
+        loc_row = QHBoxLayout()
+        loc_row.setSpacing(8)
+        self._city_lbl = QLabel()
+        self._city_lbl.setStyleSheet("color: #ffffff; font-size: 22px; font-weight: 700;")
+        self._country_lbl = QLabel()
+        self._country_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 14px;")
+        self._country_lbl.setAlignment(Qt.AlignmentFlag.AlignBottom)
+        loc_row.addWidget(self._city_lbl)
+        loc_row.addWidget(self._country_lbl)
+        loc_row.addStretch()
+        v.addLayout(loc_row)
 
         self._date_lbl = QLabel()
-        self._date_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        self._date_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         v.addWidget(self._date_lbl)
 
+        v.addSpacing(6)
+
+        # Hero card (next prayer)
+        self._hero_card = NextPrayerCard("—", "--:--", "Loading...", self.lang)
+        v.addWidget(self._hero_card)
+
         v.addSpacing(4)
+
+        # Prayer list
+        self._cards_widget = QWidget()
+        self._cards_widget.setStyleSheet("background: transparent;")
+        self._cards_layout = QVBoxLayout(self._cards_widget)
+        self._cards_layout.setSpacing(0)
+        self._cards_layout.setContentsMargins(0, 0, 0, 0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet("background: transparent; border: none;")
-
-        self._cards_widget = QWidget()
-        self._cards_widget.setStyleSheet("background: transparent;")
-        self._cards_layout = QVBoxLayout(self._cards_widget)
-        self._cards_layout.setSpacing(8)
-        self._cards_layout.setContentsMargins(0, 0, 8, 0)
         scroll.setWidget(self._cards_widget)
-        v.addWidget(scroll)
+        v.addWidget(scroll, 1)
+
+        # Bottom info bar
+        self._info_lbl = QLabel()
+        self._info_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        v.addWidget(self._info_lbl)
 
         self._loading_lbl = QLabel(self._t("loading"))
         self._loading_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 13px;")
@@ -524,6 +658,13 @@ class MainWindow(QWidget):
     def refresh_times(self):
         if self._worker and self._worker.isRunning():
             return
+
+        # Try cache first for instant display
+        from core.settings import get_cached_times
+        cached = get_cached_times(self.settings)
+        if cached and not self.times:
+            self._on_times_ready(cached)
+
         self._loading_lbl.show()
         self._worker = FetchWorker(
             self.settings.get("city", "Bishkek"),
@@ -538,20 +679,70 @@ class MainWindow(QWidget):
     def _on_times_ready(self, times):
         self._loading_lbl.hide()
         self.times = times
-        self._loc_lbl.setText(
-            f"{self.settings.get('city','')} , {self.settings.get('country','')}"
-        )
-        from datetime import date
-        self._date_lbl.setText(date.today().strftime("%d %B %Y"))
-        self._render_prayers()  # sets self.next_prayer
-        # Pass times to tray AFTER render so next_prayer is correct
+
+        # Save to cache for offline use
+        from core.settings import save_cached_times
+        save_cached_times(self.settings, times)
+
+        city    = self.settings.get("city", "")
+        country = self.settings.get("country", "")
+        self._city_lbl.setText(city)
+        self._country_lbl.setText(country)
+
+        # Localized date
+        self._date_lbl.setText(self._localized_date())
+
+        madhab = self.settings.get("madhab", "Hanafi")
+        method = self.settings.get("method", "MWL")
+        self._info_lbl.setText(f"{madhab}  ·  {method}")
+
+        self._render_prayers()
         if hasattr(self, "_tray"):
             lang_names = TRANSLATIONS.get(self.lang, TRANSLATIONS["en"])
             self._tray.set_times(times, self.next_prayer or "", lang_names)
 
+    def _localized_date(self) -> str:
+        """Return today's date in the current language."""
+        from datetime import date
+        today = date.today()
+        lang  = self.lang
+
+        days_en = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        days_ru = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"]
+        days_kg = ["Дүйшөмбү","Шейшемби","Шаршемби","Бейшемби","Жума","Ишемби","Жекшемби"]
+
+        months_ru = ["","января","февраля","марта","апреля","мая","июня",
+                     "июля","августа","сентября","октября","ноября","декабря"]
+        months_kg = ["","январь","февраль","март","апрель","май","июнь",
+                     "июль","август","сентябрь","октябрь","ноябрь","декабрь"]
+
+        wd = today.weekday()
+        d, m, y = today.day, today.month, today.year
+
+        if lang == "ru":
+            return f"{days_ru[wd]}, {d} {months_ru[m]} {y}"
+        elif lang == "kg":
+            return f"{days_kg[wd]}, {d} {months_kg[m]} {y}"
+        else:
+            return today.strftime("%A, %d %B %Y")
+
     def _on_fetch_error(self, msg):
         self._loading_lbl.hide()
-        QMessageBox.warning(self, self._t("error"), msg)
+        # Try offline cache
+        from core.settings import get_cached_times
+        cached = get_cached_times(self.settings)
+        if cached:
+            self.times = cached
+            self._city_lbl.setText(self.settings.get("city", ""))
+            self._country_lbl.setText(self.settings.get("country", ""))
+            self._date_lbl.setText(self._localized_date())
+            madhab = self.settings.get("madhab", "Hanafi")
+            method = self.settings.get("method", "MWL")
+            self._info_lbl.setText(f"{madhab}  ·  {method}  ·  📵 offline")
+            self._render_prayers()
+        else:
+            QMessageBox.warning(self, self._t("error"),
+                f"No internet connection and no cached data.\n\n{msg}")
 
     # ── Render cards ──────────────────────────────────────────────────────────
 
@@ -564,24 +755,112 @@ class MainWindow(QWidget):
         now = QTime.currentTime()
         self.next_prayer = self._get_next_prayer(now)
         self.active_card = None
+        lang_names = TRANSLATIONS.get(self.lang, TRANSLATIONS["en"])
 
+        # Update hero card
+        current = self._get_current_prayer(now)
+        if current and current in self.times:
+            hero_name  = lang_names.get(current, current)
+            hero_time  = self.times[current]
+            hero_label = lang_names.get("current_prayer", "Current prayer")
+        else:
+            hero_name  = lang_names.get(self.next_prayer, self.next_prayer)
+            hero_time  = self.times.get(self.next_prayer, "--:--")
+            hero_label = lang_names.get("next_prayer", "Next prayer")
+
+        if hasattr(self, "_hero_card"):
+            self._hero_card._name_lbl.setText(hero_name)
+            self._hero_card._time_lbl.setText(hero_time)
+            self._hero_card._label_lbl.setText(hero_label)
+            self.active_card = self._hero_card
+
+        # Calculate progress bar (how far through current prayer period)
+        if current and current in self.times:
+            prayer_list = [
+                (n, t) for n, t in self.times.items() if n != "Sunrise"
+            ]
+            for i, (n, t) in enumerate(prayer_list):
+                if n == current and i + 1 < len(prayer_list):
+                    t_start = QTime.fromString(t, "HH:mm")
+                    t_end   = QTime.fromString(prayer_list[i+1][1], "HH:mm")
+                    total   = t_start.secsTo(t_end)
+                    elapsed = t_start.secsTo(now)
+                    if total > 0:
+                        progress = elapsed / total
+                        if hasattr(self, "_hero_card"):
+                            self._hero_card.set_progress(progress)
+                    break
+        else:
+            if hasattr(self, "_hero_card"):
+                self._hero_card.set_progress(0)
+
+        # Regular cards for all prayers
         for name, time_str in self.times.items():
             is_next = (name == self.next_prayer)
             card = PrayerCard(name, time_str, is_next, lang=self.lang)
             self._cards_layout.addWidget(card)
-            if is_next:
-                self.active_card = card
 
         self._cards_layout.addStretch()
 
-    def _get_next_prayer(self, now):
+    def _get_current_prayer(self, now: QTime) -> str | None:
+        """
+        Returns prayer currently active.
+        Logic:
+        - Fajr is active from Fajr until Sunrise
+        - Dhuhr/Asr/Maghrib/Isha active from their start until next one
+        - Between Sunrise and Dhuhr — no current prayer (return None)
+        - After Isha — Isha is active until midnight
+        """
+        times = self.times
+        if not times:
+            return None
+
+        fajr    = QTime.fromString(times.get("Fajr",    "00:00"), "HH:mm")
+        sunrise = QTime.fromString(times.get("Sunrise", "00:00"), "HH:mm")
+
+        # Between midnight and Fajr — no prayer
+        if now < fajr:
+            return None
+
+        # Fajr time → only until Sunrise
+        if fajr <= now < sunrise:
+            return "Fajr"
+
+        # After Sunrise — skip to next prayer
+        skip = {"Sunrise", "Fajr"}
+        prayer_list = [(n, t) for n, t in times.items() if n not in skip]
+
+        for i in range(len(prayer_list) - 1):
+            name, time_str = prayer_list[i]
+            _, next_time   = prayer_list[i + 1]
+            t_start = QTime.fromString(time_str, "HH:mm")
+            t_end   = QTime.fromString(next_time, "HH:mm")
+            if t_start <= now < t_end:
+                return name
+
+        # After Isha
+        if prayer_list:
+            last_name, last_time = prayer_list[-1]
+            t_last = QTime.fromString(last_time, "HH:mm")
+            if now >= t_last:
+                return last_name
+
+        return None
+
+    def _get_next_prayer(self, now: QTime) -> str:
+        """Returns the next prayer after current time. Skips Sunrise."""
+        skip = {"Sunrise"}
         for name, time_str in self.times.items():
-            if name == "Sunrise":
+            if name in skip:
                 continue
             t = QTime.fromString(time_str, "HH:mm")
             if t > now:
                 return name
         return "Fajr"
+
+    def _auto_refresh(self):
+        """Called every 30 min — handles laptop sleep/wake."""
+        self.refresh_times()
 
     # ── Countdown tick ────────────────────────────────────────────────────────
 
@@ -590,14 +869,17 @@ class MainWindow(QWidget):
             return
         if not self.next_prayer or self.next_prayer not in self.times:
             return
+
         now  = QTime.currentTime()
         t    = QTime.fromString(self.times[self.next_prayer], "HH:mm")
         secs = now.secsTo(t)
-        # After Isha — next Fajr is tomorrow, add 24h
+
+        # After Isha — next Fajr is tomorrow
         if secs < 0:
             secs += 86400
+
+        # Prayer time just arrived
         if secs == 0:
-            # Fire notification if enabled
             if self.settings.get("notifications", True):
                 lang_names = TRANSLATIONS.get(self.lang, TRANSLATIONS["en"])
                 name     = lang_names.get(self.next_prayer, self.next_prayer)
@@ -607,19 +889,59 @@ class MainWindow(QWidget):
                 self._last_notif = notif
             self._render_prayers()
             return
+
         h, rem = divmod(secs, 3600)
         m, s   = divmod(rem, 60)
         countdown = f"in {h:02d}:{m:02d}:{s:02d}"
-        self.active_card.countdown_lbl.setText(countdown)
 
-        # Overlay and tray show NEXT prayer name + its time + countdown
+        # Update hero card countdown
+        if hasattr(self, "_hero_card") and hasattr(self._hero_card, "countdown_lbl"):
+            self._hero_card.countdown_lbl.setText(countdown)
+
+        # Update progress bar
+        if hasattr(self, "_hero_card") and self.times:
+            current = self._get_current_prayer(now)
+            if current and current in self.times:
+                prayer_list = [(n, t) for n, t in self.times.items() if n != "Sunrise"]
+                for i, (n, t) in enumerate(prayer_list):
+                    if n == current and i + 1 < len(prayer_list):
+                        t_start = QTime.fromString(t, "HH:mm")
+                        t_end   = QTime.fromString(prayer_list[i+1][1], "HH:mm")
+                        total   = t_start.secsTo(t_end)
+                        elapsed = t_start.secsTo(now)
+                        if total > 0:
+                            self._hero_card.set_progress(elapsed / total)
+                        break
+
         lang_names = TRANSLATIONS.get(self.lang, TRANSLATIONS["en"])
-        next_name     = lang_names.get(self.next_prayer, self.next_prayer)
-        next_time_str = self.times[self.next_prayer]
+
+        # Tray and overlay: show CURRENT prayer if active, else next
+        current = self._get_current_prayer(now)
+        if current and current in self.times:
+            # Show current prayer + time remaining until next
+            cur_name     = lang_names.get(current, current)
+            cur_time_str = self.times[current]
+            # Time remaining = secs until next prayer
+            h2, rem2 = divmod(secs, 3600)
+            m2, s2   = divmod(rem2, 60)
+            remaining = f"{h2:02d}:{m2:02d}"  # shorter format for tray
+            tray_label = cur_name
+            tray_count = remaining
+            overlay_name = cur_name
+            overlay_time = cur_time_str
+            overlay_count = countdown
+        else:
+            # Between Isha and Fajr — show next Fajr
+            tray_label   = lang_names.get(self.next_prayer, self.next_prayer)
+            tray_count   = f"{h:02d}:{m:02d}"
+            overlay_name = tray_label
+            overlay_time = self.times[self.next_prayer]
+            overlay_count = countdown
+
         if hasattr(self, "_overlay"):
-            self._overlay.update_info(next_name, next_time_str, countdown)
+            self._overlay.update_info(overlay_name, overlay_time, overlay_count)
         if hasattr(self, "_tray"):
-            self._tray.update_prayer(next_name, countdown)
+            self._tray.update_prayer(tray_label, tray_count)
 
     def _on_display_mode_changed(self, index: int):
         mode = "overlay" if index == 0 else "taskbar"
@@ -788,8 +1110,7 @@ QLabel {{ background: transparent; }}
         self._build_layout()
         if self.times:
             self._render_prayers()
-            self._loc_lbl.setText(
-                f"{self.settings.get('city','')} , {self.settings.get('country','')}"
-            )
+            self._city_lbl.setText(self.settings.get("city", ""))
+            self._country_lbl.setText(self.settings.get("country", ""))
             from datetime import date
-            self._date_lbl.setText(date.today().strftime("%d %B %Y"))
+            self._date_lbl.setText(date.today().strftime("%A, %d %B %Y"))

@@ -1,102 +1,110 @@
 """
 notification.py — Prayer time notification popup.
-Shows when a prayer time arrives with a person illustration.
-Can be disabled via settings.
+Redesigned: compact, localized, better visual hierarchy.
 """
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QApplication
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QPushButton, QApplication, QGraphicsDropShadowEffect
+)
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (
     QPainter, QColor, QBrush, QPen, QPainterPath,
-    QFont, QLinearGradient, QRadialGradient
+    QFont, QRadialGradient
 )
 
-ACCENT  = "#1D9E75"
-BG      = "#0f1e2e"
-TEXT    = "#e0e0e0"
-MUTED   = "#8888aa"
+# Try to import theme colors, fallback to defaults
+try:
+    from themes import THEMES
+    _theme = THEMES.get("Dark Green", {})
+except ImportError:
+    _theme = {}
+
+ACCENT  = _theme.get("accent", "#34D399")
+BG      = _theme.get("bg", "#0f172a")
+TEXT    = _theme.get("text", "#F9FAFB")
+MUTED   = "#6B7280"
 
 
 class PersonIllustration(QWidget):
-    """Draws a simple person with hands raised to ears (Takbir position)."""
+    """Draws a person with hands raised (Takbir) — larger with glow."""
 
-    def __init__(self, size: int = 80, parent=None):
+    def __init__(self, size: int = 90, parent=None):
         super().__init__(parent)
         self.setFixedSize(size, size)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._size = size
+        self._s = size / 90  # scale factor
+
+    def _sc(self, v: float) -> float:
+        return v * self._s
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         sz = self._size
-        c  = QColor(ACCENT)
-        skin = QColor("#f5c895")
+        s = self._s
 
-        # ── Glow circle background ────────────────────────────────────────
+        # Glow behind person
         glow = QRadialGradient(sz/2, sz/2, sz/2)
-        glow.setColorAt(0.0, QColor(29, 158, 117, 40))
-        glow.setColorAt(1.0, QColor(29, 158, 117, 0))
+        glow.setColorAt(0.0, QColor(ACCENT).lighter(120))
+        glow.setColorAt(0.4, QColor(ACCENT))
+        glow.setColorAt(1.0, QColor(ACCENT).darker(200))
         p.setBrush(QBrush(glow))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(0, 0, sz, sz)
 
-        s = sz / 80  # scale factor (base design at 80px)
+        c = QColor(ACCENT)
+        skin = QColor("#f5c895")
 
-        def sc(v): return v * s  # scale value
-
-        # ── Head ──────────────────────────────────────────────────────────
+        # Head
         p.setBrush(QBrush(skin))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QPointF(sz/2, sc(14)), sc(10), sc(10))
+        p.drawEllipse(QPointF(sz/2, self._sc(16)), self._sc(12), self._sc(12))
 
-        # ── Kufi (cap) ────────────────────────────────────────────────────
+        # Kufi
         p.setBrush(QBrush(QColor("#2a4a3a")))
         cap = QPainterPath()
-        cap.addEllipse(QPointF(sz/2, sc(10)), sc(10), sc(7))
-        cap.addRect(QRectF(sz/2 - sc(10), sc(10), sc(20), sc(5)))
+        cap.addEllipse(QPointF(sz/2, self._sc(11)), self._sc(12), self._sc(8))
+        cap.addRect(QRectF(sz/2 - self._sc(12), self._sc(11), self._sc(24), self._sc(6)))
         p.drawPath(cap)
 
-        # ── Body (thobe) ──────────────────────────────────────────────────
+        # Body (thobe)
         p.setBrush(QBrush(QColor("#dce8f0")))
         body = QPainterPath()
-        body.moveTo(sz/2 - sc(10), sc(25))
-        body.lineTo(sz/2 + sc(10), sc(25))
-        body.lineTo(sz/2 + sc(13), sc(62))
-        body.lineTo(sz/2 - sc(13), sc(62))
+        body.moveTo(sz/2 - self._sc(12), self._sc(28))
+        body.lineTo(sz/2 + self._sc(12), self._sc(28))
+        body.lineTo(sz/2 + self._sc(15), self._sc(68))
+        body.lineTo(sz/2 - self._sc(15), self._sc(68))
         body.closeSubpath()
         p.drawPath(body)
 
-        # ── Left arm raised (Takbir) ──────────────────────────────────────
-        arm_pen = QPen(skin, sc(6), Qt.PenStyle.SolidLine,
-                       Qt.PenCapStyle.RoundCap)
+        # Arms raised
+        arm_pen = QPen(skin, self._sc(7), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(arm_pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        # Left arm: shoulder → elbow → hand near ear
-        p.drawLine(QPointF(sz/2 - sc(9), sc(28)),
-                   QPointF(sz/2 - sc(20), sc(22)))
-        p.drawLine(QPointF(sz/2 - sc(20), sc(22)),
-                   QPointF(sz/2 - sc(18), sc(12)))
+        # Left
+        p.drawLine(QPointF(sz/2 - self._sc(10), self._sc(30)),
+                   QPointF(sz/2 - self._sc(24), self._sc(22)))
+        p.drawLine(QPointF(sz/2 - self._sc(24), self._sc(22)),
+                   QPointF(sz/2 - self._sc(22), self._sc(10)))
+        # Right
+        p.drawLine(QPointF(sz/2 + self._sc(10), self._sc(30)),
+                   QPointF(sz/2 + self._sc(24), self._sc(22)))
+        p.drawLine(QPointF(sz/2 + self._sc(24), self._sc(22)),
+                   QPointF(sz/2 + self._sc(22), self._sc(10)))
 
-        # Right arm
-        p.drawLine(QPointF(sz/2 + sc(9), sc(28)),
-                   QPointF(sz/2 + sc(20), sc(22)))
-        p.drawLine(QPointF(sz/2 + sc(20), sc(22)),
-                   QPointF(sz/2 + sc(18), sc(12)))
-
-        # ── Hands near ears ───────────────────────────────────────────────
+        # Hands
         p.setBrush(QBrush(skin))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QPointF(sz/2 - sc(18), sc(10)), sc(4), sc(4))
-        p.drawEllipse(QPointF(sz/2 + sc(18), sc(10)), sc(4), sc(4))
+        p.drawEllipse(QPointF(sz/2 - self._sc(22), self._sc(8)), self._sc(5), self._sc(5))
+        p.drawEllipse(QPointF(sz/2 + self._sc(22), self._sc(8)), self._sc(5), self._sc(5))
 
-        # ── Legs ──────────────────────────────────────────────────────────
-        leg_pen = QPen(QColor("#c8d8e4"), sc(7), Qt.PenStyle.SolidLine,
-                       Qt.PenCapStyle.RoundCap)
+        # Legs
+        leg_pen = QPen(QColor("#c8d8e4"), self._sc(8), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(leg_pen)
-        p.drawLine(QPointF(sz/2 - sc(5), sc(61)),
-                   QPointF(sz/2 - sc(6), sc(74)))
-        p.drawLine(QPointF(sz/2 + sc(5), sc(61)),
-                   QPointF(sz/2 + sc(6), sc(74)))
+        p.drawLine(QPointF(sz/2 - self._sc(6), self._sc(67)),
+                   QPointF(sz/2 - self._sc(7), self._sc(82)))
+        p.drawLine(QPointF(sz/2 + self._sc(6), self._sc(67)),
+                   QPointF(sz/2 + self._sc(7), self._sc(82)))
 
 
 class PrayerNotification(QWidget):
@@ -113,7 +121,7 @@ class PrayerNotification(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(280, 180)
+        self.setFixedSize(300, 160)
 
         self._build_ui(prayer_name, prayer_time)
         self._position()
@@ -126,31 +134,32 @@ class PrayerNotification(QWidget):
 
     def _build_ui(self, name: str, time_str: str):
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 14)
-        root.setSpacing(8)
+        root.setContentsMargins(18, 16, 18, 14)
+        root.setSpacing(10)
 
-        # ── Top row: illustration + text ──────────────────────────────────
+        # Top row: illustration + text
         top = QHBoxLayout()
-        top.setSpacing(12)
+        top.setSpacing(14)
 
-        person = PersonIllustration(72)
+        person = PersonIllustration(90)
         top.addWidget(person)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(3)
+        text_col.setSpacing(4)
+        text_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        it_lbl = QLabel("It's time for")
-        it_lbl.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
-        text_col.addWidget(it_lbl)
+        subtitle = QLabel("Время намаза")
+        subtitle.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        text_col.addWidget(subtitle)
 
         name_lbl = QLabel(name)
-        name_lbl.setStyleSheet(
-            f"color: #ffffff; font-size: 20px; font-weight: 700; background: transparent;"
-        )
+        name_lbl.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        name_lbl.setStyleSheet("color: #ffffff; background: transparent;")
         text_col.addWidget(name_lbl)
 
         time_lbl = QLabel(time_str)
-        time_lbl.setStyleSheet(f"color: {ACCENT}; font-size: 14px; background: transparent;")
+        time_lbl.setFont(QFont("Segoe UI", 14))
+        time_lbl.setStyleSheet(f"color: {ACCENT}; background: transparent;")
         text_col.addWidget(time_lbl)
 
         text_col.addStretch()
@@ -159,36 +168,38 @@ class PrayerNotification(QWidget):
 
         root.addLayout(top)
 
-        # ── Divider ───────────────────────────────────────────────────────
+        # Divider
         div = QWidget()
         div.setFixedHeight(1)
-        div.setStyleSheet(f"background: rgba(255,255,255,0.08);")
+        div.setStyleSheet("background: rgba(255,255,255,0.06);")
         root.addWidget(div)
 
-        # ── Buttons ───────────────────────────────────────────────────────
+        # Buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        dismiss_btn = QPushButton("Dismiss")
-        dismiss_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {ACCENT}; color: #ffffff; border: none;
-                border-radius: 6px; padding: 6px 16px; font-size: 12px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{ background: #17b882; }}
-        """)
-        dismiss_btn.clicked.connect(self._dismiss)
-
-        snooze_btn = QPushButton("5 min")
+        snooze_btn = QPushButton("5 мин")
         snooze_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {MUTED}; border: 1px solid #2a2a4a;
-                border-radius: 6px; padding: 6px 12px; font-size: 12px;
+                background: transparent; color: {MUTED};
+                border: 1px solid #374151; border-radius: 8px;
+                padding: 6px 14px; font-size: 12px;
             }}
             QPushButton:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
         """)
         snooze_btn.clicked.connect(self._snooze)
+
+        dismiss_btn = QPushButton("Закрыть")
+        dismiss_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT}; color: #ffffff; border: none;
+                border-radius: 8px; padding: 6px 16px; font-size: 12px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background: {ACCENT}dd; }}
+            QPushButton:pressed {{ background: {ACCENT}99; }}
+        """)
+        dismiss_btn.clicked.connect(self._dismiss)
 
         btn_row.addStretch()
         btn_row.addWidget(snooze_btn)
@@ -197,18 +208,18 @@ class PrayerNotification(QWidget):
 
     def _position(self):
         screen = QApplication.primaryScreen().availableGeometry()
-        self.move(screen.right() - self.width() - 16,
-                  screen.bottom() - self.height() - 16)
+        self.move(screen.right() - self.width() - 20,
+                  screen.bottom() - self.height() - 20)
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
 
-        # Card background
-        p.setBrush(QBrush(QColor("#0f1e2e")))
-        p.setPen(QPen(QColor(ACCENT), 1.0))
-        p.drawRoundedRect(QRectF(0.5, 0.5, w-1, h-1), 14, 14)
+        # Card background with subtle border
+        p.setBrush(QBrush(QColor(BG)))
+        p.setPen(QPen(QColor(ACCENT), 1.2))
+        p.drawRoundedRect(QRectF(0.5, 0.5, w-1, h-1), 16, 16)
 
         # Top accent line
         p.setPen(Qt.PenStyle.NoPen)
@@ -229,7 +240,7 @@ class PrayerNotification(QWidget):
 
 
 def show_prayer_notification(prayer_name: str, prayer_time: str) -> PrayerNotification:
-    """Create and show a prayer notification. Returns widget so caller can connect signals."""
+    """Create and show a prayer notification."""
     notif = PrayerNotification(prayer_name, prayer_time)
     notif.show()
     return notif

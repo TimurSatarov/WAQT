@@ -8,9 +8,14 @@ DEFAULT = {
     "country": "Kyrgyzstan",
     "madhab": "Hanafi",
     "method": "MWL",
-    "theme": "dark",
+    "theme_name": "Dark Green",
     "overlay_style": "pill",
-    "auto_location": True
+    "display_mode": "overlay",
+    "notifications": True,
+    "language": "en",
+    "auto_location": True,
+    "cached_times": None,
+    "cached_date": None,
 }
 
 def load() -> dict:
@@ -19,7 +24,6 @@ def load() -> dict:
             data = {**DEFAULT, **json.load(f)}
     else:
         data = DEFAULT.copy()
-        # First run — try to auto-detect location
         try:
             from core.location import get_location_by_ip
             loc = get_location_by_ip()
@@ -33,3 +37,19 @@ def load() -> dict:
 def save(data: dict):
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+def save_cached_times(data: dict, times: dict):
+    """Save prayer times to local cache for offline use."""
+    from datetime import date
+    data["cached_times"] = times
+    data["cached_date"]  = date.today().isoformat()
+    save(data)
+
+def get_cached_times(data: dict) -> dict | None:
+    """Return cached times if they exist and are from today."""
+    from datetime import date
+    cached = data.get("cached_times")
+    cached_date = data.get("cached_date")
+    if cached and cached_date == date.today().isoformat():
+        return cached
+    return None
